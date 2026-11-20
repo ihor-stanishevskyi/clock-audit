@@ -261,3 +261,11 @@ def test_one_clock_carries_its_sites():
 def test_a_huge_model_does_not_dump_its_sites_inline():
     b = client.get("/clocks/SexEstimation").json()
     assert "sites" not in b and "sites_omitted" in b
+
+
+def test_health_carries_the_caveat_so_the_page_can_show_it_unprompted():
+    """The block headed "what this cannot tell you" sat on "loading" until
+    someone ran an audit - which is exactly the reader who had not yet been
+    warned. The limits ship with the status, not with the answer."""
+    c = client.get("/health").json()["caveat"]
+    assert "extrapolation" in c and "rule of thumb" in c

@@ -149,6 +149,7 @@ async function j(url, opts) {
       [(h.distinct_sites_age_clocks || 0).toLocaleString("en-US"), "distinct CpGs across the ageing clocks"],
       [Object.keys(h.catalogue_from || {}).map(n => n + " " + h.catalogue_from[n]).join(", "), "built from"],
     ].map(([v, l]) => `<div class="fact"><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join("");
+    if (h.caveat) $("#caveat").textContent = h.caveat;
     const idle = Object.keys(h.installed_but_contributed_nothing || {});
     $("#kindline").innerHTML =
       `Of ${esc(h.model_count)} models: <b>${esc(k.age || 0)}</b> predict age or the rate of ageing, ` +
@@ -157,7 +158,11 @@ async function j(url, opts) {
       `disease status, cell composition. Calling all ${esc(h.model_count)} "ageing clocks" would more ` +
       `than double the real figure.` +
       (idle.length ? ` ${esc(idle.join(", "))} is installed but contributes no model here.` : "");
-  } catch (e) { $("#facts").textContent = "could not load: " + e.message; }
+  } catch (e) {
+    $("#facts").textContent = "could not load: " + e.message;
+    $("#caveat").textContent = "Could not load the service\u2019s own caveat. "
+      + "Treat any number below with more suspicion, not less.";
+  }
 })();
 
 async function ageNames() {

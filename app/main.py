@@ -138,7 +138,11 @@ def clock(name: str):
 
 @app.get("/health", tags=["ops"])
 def health():
-    return {"status": "ok", "version": __version__, **sources()}
+    # The caveat rides along here, not only on an audit reply. The page shows
+    # it before anyone has asked a question, which is when a reader most needs
+    # to know what the tool cannot tell them - and it stops that block from
+    # sitting on "loading" for a visitor who never runs an audit.
+    return {"status": "ok", "version": __version__, "caveat": CAVEAT, **sources()}
 
 
 @app.get("/clocks", tags=["catalogue"])
