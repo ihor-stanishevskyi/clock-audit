@@ -195,13 +195,14 @@ jobs:
           import json, os, urllib.request
           base = os.environ["URL"].rstrip("/")
           d = json.load(open("health.json"))
-          assert d["status"] == "ok" and d["clock_count"] > 40, d
+          assert d["status"] == "ok" and d["age_clock_count"] > 20, d
           req = urllib.request.Request(base + "/audit",
               data=json.dumps({"cpgs": ["cg99999999"], "clocks": ["Horvathv1"]}).encode(),
               headers={"content-type": "application/json"})
           r = json.load(urllib.request.urlopen(req))["results"][0]
           assert r["present_sites"] == 0 and r["verdict"] == "refuse", r
-          print(f"live: {d['clock_count']} clocks, zero coverage -> {r['verdict']}")
+          print(f"live: {d['age_clock_count']} ageing clocks of {d['model_count']} models, "
+                f"zero coverage -> {r['verdict']}")
           PY
 
       - name: summary

@@ -18,7 +18,7 @@ from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from . import __version__
-from .clocks import catalogue, sources, summary
+from .clocks import KIND_NOTE, catalogue, sources, summary
 from .degradation import SOURCE, retained_signal, verdict
 
 MAX_SITES = 1_200_000          # EPIC v2 is ~935k; this is a generous ceiling
@@ -110,8 +110,13 @@ def health():
 
 
 @app.get("/clocks", tags=["catalogue"])
-def clocks():
-    return {"clocks": summary(), **sources()}
+def clocks(
+    kind: Annotated[str | None, Query(description="Keep only one kind: age, "
+                                      "gestational, mitotic or other. Omit for all.")] = None,
+):
+    if kind is not None and kind not in KIND_NOTE:
+        raise HTTPException(400, f"unknown kind {kind!r}; expected one of {sorted(KIND_NOTE)}")
+    return {"clocks": summary(kind), "filtered_to": kind, **sources()}
 
 
 @app.post("/audit", tags=["audit"])

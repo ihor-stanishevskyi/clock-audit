@@ -74,8 +74,10 @@ jobs:
           import json
           d = json.load(open("health.json"))
           assert d["status"] == "ok", d
-          assert d["clock_count"] > 40, d
-          print(f"ok: {d['clock_count']} clocks, biolearn {d['libraries']['biolearn']}")
+          assert d["model_count"] > 40 and d["age_clock_count"] > 20, d
+          assert set(d["catalogue_from"]), d
+          print(f"ok: {d['model_count']} models, {d['age_clock_count']} of them ageing clocks, "
+                f"from {d['catalogue_from']}")
           PY
 
       - name: a real audit through the running container

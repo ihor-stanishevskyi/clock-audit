@@ -47,8 +47,40 @@ def test_health():
     assert r.status_code == 200
     b = r.json()
     assert b["status"] == "ok"
-    assert b["clock_count"] > 0
-    assert "biolearn" in b["libraries"]
+    assert b["model_count"] > 0
+    assert "biolearn" in b["catalogue_from"]
+
+
+def test_a_library_is_named_a_source_only_if_it_put_models_here():
+    """The defect this pins: the service listed pyaging beside biolearn while
+    every model in the catalogue came from biolearn. A version number is not a
+    contribution, and the page said otherwise for a whole day."""
+    b = client.get("/health").json()
+    libs = {c["library"] for c in client.get("/clocks").json()["clocks"]}
+    assert set(b["catalogue_from"]) == libs
+    assert not (set(b.get("installed_but_contributed_nothing", {})) & libs)
+
+
+def test_counts_add_up_and_age_clocks_are_not_the_whole_catalogue():
+    b = client.get("/health").json()
+    assert sum(b["models_by_kind"].values()) == b["model_count"]
+    assert b["age_clock_count"] == b["models_by_kind"]["age"]
+    # Most of the gallery predicts something other than age; saying "N ageing
+    # clocks" about the whole catalogue overstates it by more than double.
+    assert b["age_clock_count"] < b["model_count"]
+    # One sex predictor needs nearly the whole array, so the all-models site
+    # count says little about ageing clocks. Keep both, never just the big one.
+    assert b["distinct_sites_age_clocks"] < b["distinct_sites_all_models"]
+
+
+def test_gestational_clocks_are_not_filed_as_age_clocks():
+    """Knight, Mayne and the Lee clocks read newborns. Horvath's cord-blood
+    neighbour Bohlin even reports "Age (days)", so output text alone is not
+    enough - tissue has to be read too."""
+    rows = {c["clock"]: c["kind"] for c in client.get("/clocks").json()["clocks"]}
+    for name in ("Knight", "Mayne", "Bohlin", "LeeControl"):
+        assert rows[name] == "gestational", (name, rows[name])
+    assert rows["Horvathv1"] == "age"
 
 
 def test_clocks_catalogue():
@@ -58,6 +90,15 @@ def test_clocks_catalogue():
     assert len(cl) > 40
     h = next(c for c in cl if c["clock"] == "Horvathv1")
     assert h["required_sites"] == 353
+
+
+def test_clocks_can_be_filtered_by_kind():
+    r = client.get("/clocks", params={"kind": "age"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["clocks"] and all(c["kind"] == "age" for c in body["clocks"])
+    assert len(body["clocks"]) == body["age_clock_count"]
+    assert client.get("/clocks", params={"kind": "banana"}).status_code == 400
 
 
 # --- audit, the happy and the unhappy --------------------------------------

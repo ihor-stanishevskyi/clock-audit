@@ -36,7 +36,11 @@ try:
 except Exception as e:  # noqa: BLE001 - reported, not swallowed
     print(f"biolearn skipped: {type(e).__name__}: {e}", file=sys.stderr)
 
-# --- pyaging: clock metadata ships locally; weights do not ------------------
+# --- pyaging: version only; it contributes NO models ------------------------
+# Its clock metadata is downloaded per clock at runtime, so nothing is
+# extracted here. The version is still recorded, and app/clocks.py reports it
+# as installed-but-contributed-nothing rather than as a source of this
+# catalogue - which is what the service wrongly implied for a day.
 try:
     out["sources"]["pyaging"] = md.version("pyaging")
 except Exception as e:  # noqa: BLE001 - pyaging is optional here
@@ -48,8 +52,8 @@ if not out["clocks"]:
 with open("app/clocks.json", "w", encoding="utf-8") as fh:
     json.dump(out, fh)
 names = sorted(out["clocks"], key=lambda k: -out["clocks"][k]["n_sites"])
-print(f"годинників: {len(out['clocks'])}")
-print(f"{'годинник':<26}{'сайтів':>8}  вихід")
+print(f"моделей (не всі - годинники віку): {len(out['clocks'])}")
+print(f"{'модель':<26}{'сайтів':>8}  вихід")
 for n in names[:12]:
     c = out["clocks"][n]
     print(f"{n:<26}{c['n_sites']:>8}  {c.get('output') or '-'}")
