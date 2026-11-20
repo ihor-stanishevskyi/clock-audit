@@ -42,17 +42,20 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          target: runtime        # never rely on stage order to pick the image
           load: true
           tags: clock-audit:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # 56 MB as of 2026-11-20. The ceiling is deliberately close to that: a
+      # loose one let a 208 MB Lambda image through unnoticed.
       - name: runtime image must stay small
         run: |
           BYTES=$(docker image inspect clock-audit:ci --format '{{.Size}}')
           MB=$((BYTES / 1024 / 1024))
           echo "runtime image: ${MB} MB"
-          test "$MB" -lt 600 || { echo "image grew past 600 MB - did torch leak into the runtime stage?"; exit 1; }
+          test "$MB" -lt 150 || { echo "image grew past 150 MB - wrong stage, or torch leaked into the runtime image"; exit 1; }
 
       - name: start the container
         run: |
