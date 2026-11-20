@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write      # it commits the two data files it rebuilds
 
 jobs:
   build:
@@ -49,6 +49,24 @@ jobs:
               print(f"{d['label']:<18} {d['probes']:>7} probes  "
                     f"{full} of {len(c['clocks'])} models fully covered")
           PY
+
+      - name: commit the rebuilt data
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- app/clocks.json.gz app/platforms.json.gz; then
+            echo "nothing changed"
+            exit 0
+          fi
+          # Authored by the bot that actually did it. These two files are
+          # machine output, not written work, and the history should say so.
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/clocks.json.gz app/platforms.json.gz
+          git commit -m "refresh the catalogue and array coverage
+
+          Rebuilt by .github/workflows/refresh-data.yml from biolearn and the
+          GEO platform tables. Counts are printed in that run's log."
+          git push
 
       - uses: actions/upload-artifact@v4
         with:
