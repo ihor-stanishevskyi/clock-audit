@@ -28,6 +28,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The subject claim decides whether AWS lets us in, and it differs between
+      # event types. Print it before assuming the role so a mismatch names itself
+      # instead of arriving as a bare "Not authorized". Claims are not secrets;
+      # the token they come from is never printed.
+      - name: what identity is GitHub actually presenting
+        run: |
+          TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | python3 -c 'import sys,json;print(json.load(sys.stdin)["value"])')
+          python3 - "$TOKEN" <<'PY'
+          import base64, json, sys
+          payload = sys.argv[1].split(".")[1]
+          payload += "=" * (-len(payload) % 4)
+          c = json.loads(base64.urlsafe_b64decode(payload))
+          for k in ("sub", "aud", "repository", "ref", "event_name", "workflow_ref"):
+              print(f"{k:14} {c.get(k)}")
+          PY
+
       - name: assume the deploy role
         uses: aws-actions/configure-aws-credentials@v4
         with:
