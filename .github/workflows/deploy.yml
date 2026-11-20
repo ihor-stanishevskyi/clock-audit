@@ -41,9 +41,26 @@ jobs:
           payload = sys.argv[1].split(".")[1]
           payload += "=" * (-len(payload) % 4)
           c = json.loads(base64.urlsafe_b64decode(payload))
-          for k in ("sub", "aud", "repository", "ref", "event_name", "workflow_ref"):
-              print(f"{k:14} {c.get(k)}")
+          print("--- every claim, repr() so invisible characters show ---")
+          for k in sorted(c):
+              print(f"{k:24} {c[k]!r}")
           PY
+          # Ask STS directly. AssumeRoleWithWebIdentity needs no credentials -
+          # the token is the credential - so its raw error says why the role was
+          # refused, where the action only reports "Not authorized". Only error
+          # text is printed: a successful response carries real keys.
+          echo "--- what STS itself says ---"
+          OUT=$(curl -sS -X POST https://sts.amazonaws.com/ \
+            -d "Action=AssumeRoleWithWebIdentity" \
+            -d "Version=2011-06-15" \
+            -d "RoleSessionName=diag" \
+            --data-urlencode "RoleArn=arn:aws:iam::031391485774:role/clock-audit-deploy" \
+            --data-urlencode "WebIdentityToken=$TOKEN")
+          if printf '%s' "$OUT" | grep -q "<Error>"; then
+            printf '%s' "$OUT" | tr '<' '\n' | grep -E '^(Code|Message)>' | sed 's/>/: /'
+            exit 1
+          fi
+          echo "accepted - STS issued credentials for this token"
 
       - name: assume the deploy role
         uses: aws-actions/configure-aws-credentials@v4
