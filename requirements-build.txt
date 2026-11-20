@@ -2,3 +2,12 @@
 # Pulls torch and friends; none of it reaches the runtime image.
 biolearn==0.9.1
 pyaging==0.6.2
+
+# biolearn imports seaborn and lifelines at module level but declares both only
+# under optional extras (dev / doc / plotting), so `pip install biolearn` alone
+# gives a package that cannot be imported. Verified in a clean venv on
+# 2026-11-20: without these, `from biolearn.model_gallery import ModelGallery`
+# raises ModuleNotFoundError. Upstream is unmaintained - last commit
+# 2026-07-11 - so this is pinned here rather than reported.
+seaborn==0.13.2
+lifelines==0.30.0
