@@ -132,19 +132,25 @@ jobs:
             aws lambda create-function-url-config \
               --function-name "$FUNCTION" --auth-type NONE >/dev/null
           fi
-          # Auth type NONE is not enough by itself. The function already had
-          # a correct-looking statement granting lambda:InvokeFunctionUrl to
-          # everyone and still answered 403; the console's own check on the URL
-          # page says why - it wants lambda:InvokeFunction granted to all
-          # principals as well. The condition holds each grant to calls that
-          # arrive over the unsigned URL, so this is not API-wide access.
-          for A in InvokeFunctionUrl; do
+          # Auth type NONE is not enough by itself. Lambda states the rule in
+          # the body of its own 403: "Invoking a Function URL requires both the
+          # lambda:InvokeFunctionUrl and lambda:InvokeFunction permissions."
+          # Most write-ups show only the first, which is why a textbook-looking
+          # policy kept refusing every request.
+          for A in InvokeFunctionUrl InvokeFunction; do
+            # The FunctionUrlAuthType condition is accepted on InvokeFunctionUrl
+            # only - AWS rejects it on InvokeFunction - so that second grant
+            # cannot be narrowed to URL calls. It costs nothing here: the URL is
+            # deliberately public, the service holds no data and no credentials,
+            # and it takes CpG identifiers rather than anyone's measurements.
+            EXTRA=""
+            [ "$A" = "InvokeFunctionUrl" ] && EXTRA="--function-url-auth-type NONE"
             if ERR=$(aws lambda add-permission \
                        --function-name "$FUNCTION" \
                        --statement-id "public-url-$A" \
                        --action "lambda:$A" --principal '*' \
-                       --function-url-auth-type NONE 2>&1 >/dev/null); then
-              echo "granted lambda:$A over the URL"
+                       $EXTRA 2>&1 >/dev/null); then
+              echo "granted lambda:$A"
             elif printf '%s' "$ERR" | grep -q ResourceConflictException; then
               echo "lambda:$A already granted"
             else
