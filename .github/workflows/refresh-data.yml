@@ -1,0 +1,59 @@
+name: refresh-data
+
+# Rebuilds the two data files the service ships with: the clock catalogue and
+# the per-array coverage table. Deliberately NOT part of the image build.
+#
+#   - Arrays and published clocks do not change week to week, so paying for a
+#     300 MB download on every deploy buys nothing.
+#   - A deploy should not fail because NCBI is slow. This can fail loudly on
+#     its own without taking the service down with it.
+#
+# The result is committed to the repo, so it is reviewable in a diff and the
+# runtime image needs neither biolearn, nor torch, nor any network.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: install the libraries the catalogue is derived from
+        run: pip install -r requirements-build.txt
+
+      - name: rebuild the clock catalogue
+        run: python scripts/extract_clocks.py && gzip -9f app/clocks.json
+
+      - name: work out what each array carries
+        run: python scripts/build_platforms.py
+
+      - name: what changed
+        run: |
+          ls -l app/clocks.json.gz app/platforms.json.gz
+          python - <<'PY'
+          import gzip, json
+          c = json.load(gzip.open("app/clocks.json.gz", "rt"))
+          p = json.load(gzip.open("app/platforms.json.gz", "rt"))
+          print(f"catalogue: {len(c['clocks'])} models, generated {c['generated']}")
+          for acc, d in p["platforms"].items():
+              full = sum(1 for n, m in c["clocks"].items() if d["present"][n] == m["n_sites"])
+              print(f"{d['label']:<18} {d['probes']:>7} probes  "
+                    f"{full} of {len(c['clocks'])} models fully covered")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: data
+          path: |
+            app/clocks.json.gz
+            app/platforms.json.gz
+          retention-days: 7
