@@ -138,7 +138,7 @@ jobs:
           # page says why - it wants lambda:InvokeFunction granted to all
           # principals as well. The condition holds each grant to calls that
           # arrive over the unsigned URL, so this is not API-wide access.
-          for A in InvokeFunctionUrl InvokeFunction; do
+          for A in InvokeFunctionUrl; do
             if ERR=$(aws lambda add-permission \
                        --function-name "$FUNCTION" \
                        --statement-id "public-url-$A" \
@@ -168,9 +168,22 @@ jobs:
           URL: ${{ steps.url.outputs.url }}
         run: |
           set -euo pipefail
+          # Retry, because a fresh container image takes a moment to be ready -
+          # but keep the last reply instead of discarding it. curl -f throws the
+          # body and headers away, which is how four runs got the same bare 403
+          # with nothing in the log to reason from.
           for i in $(seq 1 20); do
-            curl -fsS "${URL}health" -o health.json && break || sleep 5
+            CODE=$(curl -sS -o health.json -D headers.txt \
+                     -w '%{http_code}' "${URL}health" || echo 000)
+            [ "$CODE" = "200" ] && break
+            echo "attempt $i: HTTP $CODE"
+            sleep 5
           done
+          if [ "$CODE" != "200" ]; then
+            echo "--- response headers ---"; cat headers.txt
+            echo "--- response body ---";    cat health.json; echo
+            exit 1
+          fi
           cat health.json
           python3 - <<'PY'
           import json, os, urllib.request
