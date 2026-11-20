@@ -1,0 +1,4 @@
+# Needed only in the build stage, to extract the clock catalogue.
+# Pulls torch and friends; none of it reaches the runtime image.
+biolearn==0.9.1
+pyaging==0.6.2

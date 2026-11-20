@@ -1,0 +1,23 @@
+[project]
+name = "clock-audit"
+version = "0.1.0"
+description = "Coverage audit for DNA-methylation ageing clocks"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+# Pinned explicitly: leaving ruff on its defaults means a new ruff version can
+# fail CI on code that did not change.
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "SIM", "RUF", "S", "BLE", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]   # pytest asserts
