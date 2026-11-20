@@ -130,10 +130,21 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 let AGE_NAMES = null;
 
-async function j(url, opts) {
-  const r = await fetch(url, opts);
+// Two failures that look alike to fetch() and are nothing alike to a reader:
+// the network dropped, or the service answered no. A phone on a flaky
+// connection hits the first one often, so retry it once before giving up and
+// say which happened - "Failed to fetch" is the browser talking, not us.
+async function j(url, opts, retry = true) {
+  let r;
+  try {
+    r = await fetch(url, opts);
+  } catch (e) {
+    if (retry) { await new Promise(s => setTimeout(s, 900)); return j(url, opts, false); }
+    throw new Error("No answer from the service. That is usually the connection, "
+                    + "not the server - check it and press again.");
+  }
   const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.detail ? JSON.stringify(body.detail) : "HTTP " + r.status);
+  if (!r.ok) throw new Error(body.detail ? JSON.stringify(body.detail) : "The service refused: HTTP " + r.status);
   return body;
 }
 
@@ -210,7 +221,9 @@ async function run(ids) {
     render(await j("/audit", {method: "POST", headers: {"content-type": "application/json"},
                               body: JSON.stringify(body)}));
   } catch (e) {
-    $("#out").innerHTML = `<div class="card"><h2>Did not work</h2><p>${esc(e.message)}</p></div>`;
+    $("#out").innerHTML = `<div class="card"><h2>Did not work</h2><p>${esc(e.message)}</p>
+      <div class="row"><button id="again">Try again</button></div></div>`;
+    $("#again").onclick = () => run(ids);
   } finally { btn.disabled = false; btn.textContent = "Audit"; }
 }
 
@@ -230,7 +243,9 @@ $("#demo").onclick = async () => {
     $("#in").value = c.sites.join("\n");
     await run(c.sites);
   } catch (e) {
-    $("#out").innerHTML = `<div class="card"><h2>Did not work</h2><p>${esc(e.message)}</p></div>`;
+    $("#out").innerHTML = `<div class="card"><h2>Did not work</h2><p>${esc(e.message)}</p>
+      <div class="row"><button id="again">Try again</button></div></div>`;
+    $("#again").onclick = () => $("#demo").click();
   } finally { b.disabled = false; b.textContent = "Demo: an array carrying only Horvath 2013"; }
 };
 </script>
