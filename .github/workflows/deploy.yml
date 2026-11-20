@@ -132,24 +132,26 @@ jobs:
             aws lambda create-function-url-config \
               --function-name "$FUNCTION" --auth-type NONE >/dev/null
           fi
-          # The statement already on the function is named public-url and
-          # grants something that still answers 403; replacing it would need
-          # lambda:GetPolicy and lambda:RemovePermission, which this role does
-          # not have. It does not need to be replaced. Lambda allows a URL call
-          # if ANY statement allows it, so add one of our own under a name only
-          # this workflow writes, always with these exact flags. A conflict on
-          # that name therefore does mean "already exactly this".
-          if ERR=$(aws lambda add-permission \
-                     --function-name "$FUNCTION" --statement-id public-url-none \
-                     --action lambda:InvokeFunctionUrl --principal '*' \
-                     --function-url-auth-type NONE 2>&1 >/dev/null); then
-            echo "added the anonymous invoke statement"
-          elif printf '%s' "$ERR" | grep -q ResourceConflictException; then
-            echo "the anonymous invoke statement is already there"
-          else
-            echo "$ERR"
-            exit 1
-          fi
+          # Auth type NONE is not enough by itself. The function already had
+          # a correct-looking statement granting lambda:InvokeFunctionUrl to
+          # everyone and still answered 403; the console's own check on the URL
+          # page says why - it wants lambda:InvokeFunction granted to all
+          # principals as well. The condition holds each grant to calls that
+          # arrive over the unsigned URL, so this is not API-wide access.
+          for A in InvokeFunctionUrl InvokeFunction; do
+            if ERR=$(aws lambda add-permission \
+                       --function-name "$FUNCTION" \
+                       --statement-id "public-url-$A" \
+                       --action "lambda:$A" --principal '*' \
+                       --function-url-auth-type NONE 2>&1 >/dev/null); then
+              echo "granted lambda:$A over the URL"
+            elif printf '%s' "$ERR" | grep -q ResourceConflictException; then
+              echo "lambda:$A already granted"
+            else
+              echo "$ERR"
+              exit 1
+            fi
+          done
           AUTH=$(aws lambda get-function-url-config --function-name "$FUNCTION" \
                    --query AuthType --output text)
           echo "auth type: $AUTH"
