@@ -132,20 +132,23 @@ jobs:
             aws lambda create-function-url-config \
               --function-name "$FUNCTION" --auth-type NONE >/dev/null
           fi
-          # Already present is the normal case on every run after the first, so
-          # that one error is tolerated - but only that one. A bare "|| true"
-          # would swallow AccessDenied too and leave the URL quietly shut.
-          if ERR=$(aws lambda add-permission \
-                     --function-name "$FUNCTION" --statement-id public-url \
-                     --action lambda:InvokeFunctionUrl --principal '*' \
-                     --function-url-auth-type NONE 2>&1 >/dev/null); then
-            echo "public invoke permission added"
-          elif printf '%s' "$ERR" | grep -q ResourceConflictException; then
-            echo "public invoke permission already in place"
-          else
-            echo "$ERR"
-            exit 1
+          # add-permission fails with ResourceConflictException on the statement
+          # id alone, whatever that statement actually grants - so treating the
+          # conflict as "already fine" accepts a stale statement that allows
+          # nothing. Print what is there, drop it, state it again.
+          POL=$(aws lambda get-policy --function-name "$FUNCTION" \
+                  --query Policy --output text 2>/dev/null || echo "")
+          if printf '%s' "$POL" | grep -q '"public-url"'; then
+            echo "resource policy before the fix:"
+            printf '%s' "$POL" | python3 -m json.tool
+            aws lambda remove-permission --function-name "$FUNCTION" \
+              --statement-id public-url
           fi
+          aws lambda add-permission \
+            --function-name "$FUNCTION" --statement-id public-url \
+            --action lambda:InvokeFunctionUrl --principal '*' \
+            --function-url-auth-type NONE >/dev/null
+          echo "public invoke permission set"
           AUTH=$(aws lambda get-function-url-config --function-name "$FUNCTION" \
                    --query AuthType --output text)
           echo "auth type: $AUTH"
