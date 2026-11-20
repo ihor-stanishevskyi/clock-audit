@@ -116,18 +116,40 @@ jobs:
           aws lambda wait function-updated-v2 --function-name "$FUNCTION"
           echo "function ready"
 
-      - name: make sure it has a public URL
+      # Enforce the wanted state, do not just check that something is there.
+      # A URL created by hand in the console defaults to AWS_IAM auth, and a
+      # create-if-missing guard walks straight past it: the URL exists, so the
+      # guard is satisfied, and every anonymous request gets 403. So set the
+      # auth type every run and (re)state the public invoke permission.
+      - name: make sure it has a public URL that answers anonymously
         id: url
         run: |
           set -euo pipefail
-          if ! aws lambda get-function-url-config --function-name "$FUNCTION" >/dev/null 2>&1; then
+          if aws lambda get-function-url-config --function-name "$FUNCTION" >/dev/null 2>&1; then
+            aws lambda update-function-url-config \
+              --function-name "$FUNCTION" --auth-type NONE >/dev/null
+          else
             aws lambda create-function-url-config \
               --function-name "$FUNCTION" --auth-type NONE >/dev/null
-            aws lambda add-permission \
-              --function-name "$FUNCTION" --statement-id public-url \
-              --action lambda:InvokeFunctionUrl --principal '*' \
-              --function-url-auth-type NONE >/dev/null
           fi
+          # Already present is the normal case on every run after the first, so
+          # that one error is tolerated - but only that one. A bare "|| true"
+          # would swallow AccessDenied too and leave the URL quietly shut.
+          if ERR=$(aws lambda add-permission \
+                     --function-name "$FUNCTION" --statement-id public-url \
+                     --action lambda:InvokeFunctionUrl --principal '*' \
+                     --function-url-auth-type NONE 2>&1 >/dev/null); then
+            echo "public invoke permission added"
+          elif printf '%s' "$ERR" | grep -q ResourceConflictException; then
+            echo "public invoke permission already in place"
+          else
+            echo "$ERR"
+            exit 1
+          fi
+          AUTH=$(aws lambda get-function-url-config --function-name "$FUNCTION" \
+                   --query AuthType --output text)
+          echo "auth type: $AUTH"
+          test "$AUTH" = "NONE"
           URL=$(aws lambda get-function-url-config --function-name "$FUNCTION" \
                   --query FunctionUrl --output text)
           echo "url=$URL" >> "$GITHUB_OUTPUT"
