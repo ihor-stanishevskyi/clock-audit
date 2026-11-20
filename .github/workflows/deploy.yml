@@ -132,32 +132,24 @@ jobs:
             aws lambda create-function-url-config \
               --function-name "$FUNCTION" --auth-type NONE >/dev/null
           fi
-          # add-permission fails with ResourceConflictException on the statement
-          # id alone, whatever that statement actually grants - so treating the
-          # conflict as "already fine" accepts a stale statement that allows
-          # nothing. Print what is there, drop it, state it again.
-          echo "resource policy before:"
-          aws lambda get-policy --function-name "$FUNCTION" \
-            --query Policy --output text | python3 -m json.tool \
-            || echo "(could not read it - the error above says why)"
-          # Remove unconditionally. Deciding from a policy read is how the last
-          # run went wrong: the read failed quietly, the branch was skipped and
-          # add-permission hit the same conflict again. Only "there was nothing
-          # to remove" is tolerated here; anything else stops the deploy.
-          if ERR=$(aws lambda remove-permission --function-name "$FUNCTION" \
-                     --statement-id public-url 2>&1 >/dev/null); then
-            echo "removed the old public-url statement"
-          elif printf '%s' "$ERR" | grep -q ResourceNotFoundException; then
-            echo "no old public-url statement to remove"
+          # The statement already on the function is named public-url and
+          # grants something that still answers 403; replacing it would need
+          # lambda:GetPolicy and lambda:RemovePermission, which this role does
+          # not have. It does not need to be replaced. Lambda allows a URL call
+          # if ANY statement allows it, so add one of our own under a name only
+          # this workflow writes, always with these exact flags. A conflict on
+          # that name therefore does mean "already exactly this".
+          if ERR=$(aws lambda add-permission \
+                     --function-name "$FUNCTION" --statement-id public-url-none \
+                     --action lambda:InvokeFunctionUrl --principal '*' \
+                     --function-url-auth-type NONE 2>&1 >/dev/null); then
+            echo "added the anonymous invoke statement"
+          elif printf '%s' "$ERR" | grep -q ResourceConflictException; then
+            echo "the anonymous invoke statement is already there"
           else
             echo "$ERR"
             exit 1
           fi
-          aws lambda add-permission \
-            --function-name "$FUNCTION" --statement-id public-url \
-            --action lambda:InvokeFunctionUrl --principal '*' \
-            --function-url-auth-type NONE >/dev/null
-          echo "public invoke permission set"
           AUTH=$(aws lambda get-function-url-config --function-name "$FUNCTION" \
                    --query AuthType --output text)
           echo "auth type: $AUTH"
