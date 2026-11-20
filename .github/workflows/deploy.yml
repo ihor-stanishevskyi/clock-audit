@@ -1,0 +1,135 @@
+name: deploy
+
+# Runs only after ci.yml has gone green on main: a broken image should never
+# reach AWS. Authentication is OIDC - GitHub presents a short-lived identity,
+# AWS checks it and hands back credentials valid for minutes. No stored keys.
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write      # required to request the OIDC token
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  FUNCTION: clock-audit
+  ECR_REPO: clock-audit
+
+jobs:
+  deploy:
+    # workflow_run fires on failure too, so check the conclusion.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: assume the deploy role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::031391485774:role/clock-audit-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: who am I
+        run: aws sts get-caller-identity
+
+      - name: make sure the image repository exists
+        run: |
+          aws ecr describe-repositories --repository-names "$ECR_REPO" >/dev/null 2>&1 \
+            || aws ecr create-repository --repository-name "$ECR_REPO" \
+                 --image-scanning-configuration scanOnPush=true >/dev/null
+          echo "repository ready"
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: build and push the Lambda image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: lambda
+          provenance: false          # Lambda rejects images with an OCI attestation manifest
+          push: true
+          tags: ${{ steps.ecr.outputs.registry }}/clock-audit:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: create or update the function
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/clock-audit:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if aws lambda get-function --function-name "$FUNCTION" >/dev/null 2>&1; then
+            echo "updating existing function"
+            aws lambda update-function-code \
+              --function-name "$FUNCTION" --image-uri "$IMAGE" >/dev/null
+          else
+            echo "creating function"
+            aws lambda create-function \
+              --function-name "$FUNCTION" \
+              --package-type Image \
+              --code ImageUri="$IMAGE" \
+              --role "arn:aws:iam::031391485774:role/clock-audit-lambda-exec" \
+              --timeout 30 --memory-size 1024 \
+              --description "Coverage audit for DNA-methylation ageing clocks" >/dev/null
+          fi
+          aws lambda wait function-updated-v2 --function-name "$FUNCTION"
+          echo "function ready"
+
+      - name: make sure it has a public URL
+        id: url
+        run: |
+          set -euo pipefail
+          if ! aws lambda get-function-url-config --function-name "$FUNCTION" >/dev/null 2>&1; then
+            aws lambda create-function-url-config \
+              --function-name "$FUNCTION" --auth-type NONE >/dev/null
+            aws lambda add-permission \
+              --function-name "$FUNCTION" --statement-id public-url \
+              --action lambda:InvokeFunctionUrl --principal '*' \
+              --function-url-auth-type NONE >/dev/null
+          fi
+          URL=$(aws lambda get-function-url-config --function-name "$FUNCTION" \
+                  --query FunctionUrl --output text)
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "$URL"
+
+      # Deploying is not the same as working. Ask the live function the one
+      # question whose right answer we know, and fail the deploy if it is wrong.
+      - name: prove the deployed function actually answers
+        env:
+          URL: ${{ steps.url.outputs.url }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 20); do
+            curl -fsS "${URL}health" -o health.json && break || sleep 5
+          done
+          cat health.json
+          python3 - <<'PY'
+          import json, os, urllib.request
+          base = os.environ["URL"].rstrip("/")
+          d = json.load(open("health.json"))
+          assert d["status"] == "ok" and d["clock_count"] > 40, d
+          req = urllib.request.Request(base + "/audit",
+              data=json.dumps({"cpgs": ["cg99999999"], "clocks": ["Horvathv1"]}).encode(),
+              headers={"content-type": "application/json"})
+          r = json.load(urllib.request.urlopen(req))["results"][0]
+          assert r["present_sites"] == 0 and r["verdict"] == "refuse", r
+          print(f"live: {d['clock_count']} clocks, zero coverage -> {r['verdict']}")
+          PY
+
+      - name: summary
+        env:
+          URL: ${{ steps.url.outputs.url }}
+        run: |
+          {
+            echo "### Deployed"
+            echo ""
+            echo "- URL: $URL"
+            echo "- image tag: \`${{ github.sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

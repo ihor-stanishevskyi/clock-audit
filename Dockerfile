@@ -43,3 +43,17 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{os.environ[\"PORT\"]}/health', timeout=4).status==200 else 1)"
 
 CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers 2"]
+
+# ---------- stage 3: the same service, as a Lambda function ----------------
+# Lambda does not run a web server - it invokes a handler - so this target uses
+# the AWS runtime base image and app/lambda_handler.py. The application code is
+# identical; only the entry point differs.
+FROM public.ecr.aws/lambda/python:3.13 AS lambda
+
+COPY requirements.txt requirements-lambda.txt ./
+RUN pip install --no-cache-dir -r requirements-lambda.txt
+
+COPY app/ ${LAMBDA_TASK_ROOT}/app/
+COPY --from=catalogue /build/app/clocks.json.gz ${LAMBDA_TASK_ROOT}/app/clocks.json.gz
+
+CMD ["app.lambda_handler.handler"]
