@@ -136,13 +136,22 @@ jobs:
           # id alone, whatever that statement actually grants - so treating the
           # conflict as "already fine" accepts a stale statement that allows
           # nothing. Print what is there, drop it, state it again.
-          POL=$(aws lambda get-policy --function-name "$FUNCTION" \
-                  --query Policy --output text 2>/dev/null || echo "")
-          if printf '%s' "$POL" | grep -q '"public-url"'; then
-            echo "resource policy before the fix:"
-            printf '%s' "$POL" | python3 -m json.tool
-            aws lambda remove-permission --function-name "$FUNCTION" \
-              --statement-id public-url
+          echo "resource policy before:"
+          aws lambda get-policy --function-name "$FUNCTION" \
+            --query Policy --output text | python3 -m json.tool \
+            || echo "(could not read it - the error above says why)"
+          # Remove unconditionally. Deciding from a policy read is how the last
+          # run went wrong: the read failed quietly, the branch was skipped and
+          # add-permission hit the same conflict again. Only "there was nothing
+          # to remove" is tolerated here; anything else stops the deploy.
+          if ERR=$(aws lambda remove-permission --function-name "$FUNCTION" \
+                     --statement-id public-url 2>&1 >/dev/null); then
+            echo "removed the old public-url statement"
+          elif printf '%s' "$ERR" | grep -q ResourceNotFoundException; then
+            echo "no old public-url statement to remove"
+          else
+            echo "$ERR"
+            exit 1
           fi
           aws lambda add-permission \
             --function-name "$FUNCTION" --statement-id public-url \
