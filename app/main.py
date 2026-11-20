@@ -22,6 +22,9 @@ from . import __version__
 from .clocks import KIND_NOTE, catalogue, kind_of, sources, summary
 from .degradation import SOURCE, retained_signal, verdict
 from .page import PAGE
+from .platforms import listing as platform_listing
+from .platforms import meta as platform_meta
+from .platforms import present_counts
 
 MAX_SITES = 1_200_000          # EPIC v2 is ~935k; this is a generous ceiling
 MAX_UPLOAD = 64 * 1024 * 1024  # 64 MiB
@@ -58,6 +61,25 @@ def guess_platform(n: int) -> str | None:
     return None
 
 
+def row(name: str, c: dict, hit: int) -> dict:
+    """One clock's verdict. Shared by the paste path and the array path, so the
+    two can never drift into disagreeing about the same coverage."""
+    cov = hit / c["n_sites"]
+    v, note = verdict(cov, hit)
+    return {"clock": name, "kind": kind_of(c), "library": c["library"],
+            "output": c.get("output"), "required_sites": c["n_sites"],
+            "present_sites": hit, "coverage": round(cov, 4),
+            "retained_signal": round(retained_signal(cov), 3),
+            "verdict": v, "note": note}
+
+
+def tally_of(results: list[dict]) -> dict:
+    t: dict[str, int] = {}
+    for r in results:
+        t[r["verdict"]] = t.get(r["verdict"], 0) + 1
+    return t
+
+
 def audit(given: list[str], only: list[str] | None) -> dict:
     cl = catalogue()["clocks"]
     if only:
@@ -74,22 +96,10 @@ def audit(given: list[str], only: list[str] | None) -> dict:
     all_known = set().union(*(c["site_set"] for c in cl.values()))
     recognised = present_set & all_known
 
-    results = []
-    for name, c in chosen.items():
-        hit = len(c["site_set"] & present_set)
-        cov = hit / c["n_sites"]
-        v, note = verdict(cov, hit)
-        results.append({
-            "clock": name, "library": c["library"], "output": c.get("output"),
-            "required_sites": c["n_sites"], "present_sites": hit,
-            "coverage": round(cov, 4),
-            "retained_signal": round(retained_signal(cov), 3),
-            "verdict": v, "note": note,
-        })
+    results = [row(name, c, len(c["site_set"] & present_set))
+               for name, c in chosen.items()]
     results.sort(key=lambda r: (-r["coverage"], r["clock"]))
-    tally = {}
-    for r in results:
-        tally[r["verdict"]] = tally.get(r["verdict"], 0) + 1
+    tally = tally_of(results)
 
     return {
         "input": {
@@ -153,6 +163,37 @@ def clocks(
     if kind is not None and kind not in KIND_NOTE:
         raise HTTPException(400, f"unknown kind {kind!r}; expected one of {sorted(KIND_NOTE)}")
     return {"clocks": summary(kind), "filtered_to": kind, **sources()}
+
+
+@app.get("/platforms", tags=["catalogue"])
+def platforms():
+    return {"platforms": platform_listing(),
+            "note": "Coverage per array is precomputed from the GEO platform "
+                    "table, so it needs none of your data."}
+
+
+@app.get("/audit/platform/{accession}", tags=["audit"])
+def audit_platform(
+    accession: str,
+    kind: Annotated[str | None, Query(description="Restrict to one kind, e.g. age.")] = None,
+):
+    """What an array carries, per clock - the question most people actually have.
+
+    Answered from the committed table rather than by asking for a file: an
+    array's probe list is a property of the chip, not of anyone's sample.
+    """
+    counts = present_counts(accession)
+    if counts is None:
+        raise HTTPException(404, f"unknown platform {accession!r}; see /platforms")
+    if kind is not None and kind not in KIND_NOTE:
+        raise HTTPException(400, f"unknown kind {kind!r}; expected one of {sorted(KIND_NOTE)}")
+    cl = catalogue()["clocks"]
+    results = [row(n, c, counts[n]) for n, c in cl.items()
+               if n in counts and (kind is None or kind_of(c) == kind)]
+    results.sort(key=lambda r: (-r["coverage"], r["clock"]))
+    return {"platform": platform_meta(accession), "filtered_to": kind,
+            "tally": tally_of(results), "results": results,
+            "caveat": CAVEAT, "measured_on": SOURCE}
 
 
 @app.post("/audit", tags=["audit"])

@@ -102,6 +102,14 @@ PAGE = r"""<!doctype html>
       <button class="ghost" id="demo">Demo: an array carrying only Horvath 2013</button>
       <label class="chk"><input type="checkbox" id="allkinds"> include non-ageing models</label>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>Or just ask about your chip</h2>
+    <p class="muted" style="font-size:14px;margin-bottom:4px">Which clocks work on a
+    given array is a property of the chip, not of your samples &mdash; so this needs no
+    file at all.</p>
+    <div class="row" id="plat"><span class="muted">loading&hellip;</span></div>
     <p class="muted" style="margin-top:11px;font-size:13px">
       Identifiers only. Methylation values are never read, never sent, never stored.</p>
   </div>
@@ -176,6 +184,31 @@ async function j(url, opts, retry = true) {
   }
 })();
 
+// The list comes from the service, so adding an array to the table puts a
+// button here without touching this page.
+(async () => {
+  try {
+    const ps = (await j("/platforms")).platforms;
+    $("#plat").innerHTML = ps.map(p =>
+      `<button class="ghost plat" data-acc="${esc(p.accession)}">${esc(p.label)}</button>`
+    ).join("") || '<span class="muted">no arrays in the table yet</span>';
+    document.querySelectorAll("button.plat").forEach(b => b.onclick = () => runPlatform(b));
+  } catch (e) { $("#plat").innerHTML = `<span class="muted">${esc(e.message)}</span>`; }
+})();
+
+async function runPlatform(btn) {
+  const label = btn.textContent, acc = btn.dataset.acc;
+  btn.disabled = true; btn.textContent = "checking\u2026";
+  try {
+    const q = $("#allkinds").checked ? "" : "?kind=age";
+    render(await j("/audit/platform/" + encodeURIComponent(acc) + q));
+  } catch (e) {
+    $("#out").innerHTML = `<div class="card"><h2>Did not work</h2><p>${esc(e.message)}</p>
+      <div class="row"><button id="again">Try again</button></div></div>`;
+    $("#again").onclick = () => runPlatform(btn);
+  } finally { btn.disabled = false; btn.textContent = label; }
+}
+
 async function ageNames() {
   if (!AGE_NAMES) AGE_NAMES = (await j("/clocks?kind=age")).clocks.map(c => c.clock);
   return AGE_NAMES;
@@ -198,14 +231,21 @@ function render(d) {
       <td data-l="predicts" class="muted">${esc(r.output || "")}</td>
     </tr>`;
   }).join("");
-  const p = d.input.platform_guess;
+  let lead;
+  if (d.platform) {
+    lead = `Every clock below, against <b>${esc(d.platform.label)}</b> as the array
+      actually ships: ${d.platform.probes.toLocaleString("en-US")} probes
+      (${esc(d.platform.accession)}). No sample involved.`;
+  } else {
+    const p = d.input.platform_guess;
+    lead = `${d.input.ids_distinct.toLocaleString("en-US")} distinct identifiers given,
+      ${d.input.ids_recognised.toLocaleString("en-US")} recognised by at least one model.
+      ${p ? "Looks like " + esc(p) + "." : ""}`;
+  }
   $("#out").innerHTML = `<div class="card">
     <h2>Result</h2>
     <div class="tally">${tally}</div>
-    <p class="muted" style="font-size:13.5px">
-      ${d.input.ids_distinct.toLocaleString("en-US")} distinct identifiers given,
-      ${d.input.ids_recognised.toLocaleString("en-US")} recognised by at least one model.
-      ${p ? "Looks like " + esc(p) + "." : ""}</p>
+    <p class="muted" style="font-size:13.5px">${lead}</p>
     <table><thead><tr><th>Clock</th><th>Verdict</th><th class="num">Coverage</th>
       <th class="num">Sites</th><th class="num">Signal kept</th><th>Predicts</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`;

@@ -269,3 +269,50 @@ def test_health_carries_the_caveat_so_the_page_can_show_it_unprompted():
     warned. The limits ship with the status, not with the answer."""
     c = client.get("/health").json()["caveat"]
     assert "extrapolation" in c and "rule of thumb" in c
+
+
+# --- what an array carries -------------------------------------------------
+
+def test_platforms_are_listed_with_their_real_sizes():
+    ps = client.get("/platforms").json()["platforms"]
+    assert len(ps) >= 3
+    for p in ps:
+        # The builder refuses a parse more than 2% off the published size; this
+        # keeps that promise visible from the outside too.
+        assert abs(p["probes"] - p["published_probes"]) / p["published_probes"] < 0.02
+        assert p["accession"].startswith("GPL")
+
+
+def test_27k_reproduces_what_we_measured_on_real_data():
+    """On 2026-11-08 we ran these clocks over GSE19711 - 540 real samples on a
+    27k array - and read the coverage off the data. This table is built the
+    other way round, from the array manifest, and lands on the same numbers.
+    Two independent routes agreeing is the reason to trust either."""
+    r = {x["clock"]: x for x in
+         client.get("/audit/platform/GPL8490", params={"kind": "age"}).json()["results"]}
+    assert r["Horvathv1"]["coverage"] == 1.0            # measured then: 100%
+    assert abs(r["Horvathv2"]["coverage"] - 0.279) < 0.01   # measured then: 27.9%
+    assert abs(r["Hannum"]["coverage"] - 0.10) < 0.02       # measured then: 10.1%
+    assert abs(r["DunedinPACE"]["coverage"] - 0.035) < 0.01  # measured then: 3.5%
+    assert r["Horvathv2"]["verdict"] in ("degraded", "unusable")
+
+
+def test_a_newer_array_is_not_strictly_better():
+    """EPIC v1 dropped tens of thousands of probes 450k carried, so clocks
+    built on 450k can lose sites on the newer chip. Worth a test: the
+    assumption that newer means safer is the kind that costs an analysis."""
+    def full(acc):
+        rs = client.get(f"/audit/platform/{acc}").json()["results"]
+        return sum(1 for x in rs if x["coverage"] == 1.0)
+    assert full("GPL21145") < full("GPL13534")
+
+
+def test_unknown_platform_says_so():
+    assert client.get("/audit/platform/GPL9999").status_code == 404
+    assert client.get("/audit/platform/GPL8490", params={"kind": "banana"}).status_code == 400
+
+
+def test_the_array_answer_needs_no_data_and_says_so():
+    b = client.get("/audit/platform/GPL8490").json()
+    assert "input" not in b           # nothing was supplied, and none is implied
+    assert b["platform"]["label"] and b["caveat"]
