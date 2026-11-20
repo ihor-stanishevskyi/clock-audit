@@ -237,3 +237,27 @@ def test_csv_empty_rejected():
 def test_csv_not_utf8_rejected():
     r = client.post("/audit/csv", files={"file": ("m.csv", io.BytesIO(b"\xff\xfe\x00bad"), "text/csv")})
     assert r.status_code == 415
+
+
+# --- the page a person actually opens --------------------------------------
+
+def test_index_is_a_page_not_json():
+    r = client.get("/")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert "<!doctype html>" in r.text
+    # Self-contained: a Lambda container has no business fetching a CDN, and an
+    # offline viewer should still get the whole page.
+    assert "http://" not in r.text and "https://" not in r.text
+
+
+def test_one_clock_carries_its_sites():
+    b = client.get("/clocks/Horvathv1").json()
+    assert b["required_sites"] == 353 and len(b["sites"]) == 353
+    assert b["kind"] == "age"
+    assert client.get("/clocks/NoSuchClock").status_code == 404
+
+
+def test_a_huge_model_does_not_dump_its_sites_inline():
+    b = client.get("/clocks/SexEstimation").json()
+    assert "sites" not in b and "sites_omitted" in b

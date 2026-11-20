@@ -15,11 +15,13 @@ import io
 from typing import Annotated
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from . import __version__
-from .clocks import KIND_NOTE, catalogue, sources, summary
+from .clocks import KIND_NOTE, catalogue, kind_of, sources, summary
 from .degradation import SOURCE, retained_signal, verdict
+from .page import PAGE
 
 MAX_SITES = 1_200_000          # EPIC v2 is ~935k; this is a generous ceiling
 MAX_UPLOAD = 64 * 1024 * 1024  # 64 MiB
@@ -102,6 +104,36 @@ def audit(given: list[str], only: list[str] | None) -> dict:
         "caveat": CAVEAT,
         "measured_on": SOURCE,
     }
+
+
+# A person opening this on a phone got a wall of JSON. The page is served from
+# the same process and reads the same endpoints, so it cannot claim more than
+# the API does.
+@app.get("/", include_in_schema=False, response_class=HTMLResponse)
+def index():
+    return HTMLResponse(PAGE)
+
+
+SITES_INLINE_MAX = 10_000
+
+
+@app.get("/clocks/{name}", tags=["catalogue"])
+def clock(name: str):
+    cl = catalogue()["clocks"]
+    if name not in cl:
+        raise HTTPException(404, f"unknown clock {name!r}; see /clocks")
+    c = cl[name]
+    out = {"clock": name, "kind": kind_of(c), "library": c["library"],
+           "required_sites": c["n_sites"], "output": c.get("output"),
+           "year": c.get("year"), "tissue": c.get("tissue")}
+    # SexEstimation needs essentially a whole array; sending that inline helps
+    # nobody and would dwarf every other response.
+    if c["n_sites"] <= SITES_INLINE_MAX:
+        out["sites"] = sorted(c["site_set"])
+    else:
+        out["sites_omitted"] = (f"{c['n_sites']} sites, over the {SITES_INLINE_MAX} "
+                                "inline limit")
+    return out
 
 
 @app.get("/health", tags=["ops"])
