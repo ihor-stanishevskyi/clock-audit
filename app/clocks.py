@@ -16,6 +16,11 @@ service came to overstate itself:
    composition. Reporting one number for all of them invites "60 ageing
    clocks", which is wrong. Each model carries its kind, and the counts are
    reported per kind.
+3. A clock's coefficient list is not always everything it needs. DunedinPACE
+   normalises against 20,000 probes before using its 173 weighted sites, so an
+   array carrying all 173 and few of the 20,000 yields a number built mostly
+   from reference values. Both sets are carried here; the service takes the
+   worse of the two coverages, not the flattering one.
 """
 import functools
 import gzip
@@ -33,6 +38,7 @@ def catalogue() -> dict:
         raw = json.load(fh)
     for c in raw["clocks"].values():
         c["site_set"] = frozenset(c["sites"])
+        c["norm_set"] = frozenset(c.get("normalisation_sites", ()))
     return raw
 
 
@@ -70,7 +76,12 @@ def summary(kind: str | None = None) -> list[dict]:
     cl = catalogue()["clocks"]
     rows = [
         {"clock": n, "kind": kind_of(c), "library": c["library"],
-         "required_sites": c["n_sites"], "output": c.get("output"),
+         "required_sites": c["n_sites"],
+         # Present only for the clocks that have one, so a reader does not take
+         # a null to mean "none needed" for every other clock.
+         **({"normalisation_sites": c["n_normalisation_sites"]}
+            if c.get("n_normalisation_sites") else {}),
+         "output": c.get("output"),
          "year": c.get("year"), "tissue": c.get("tissue")}
         for n, c in sorted(cl.items(), key=lambda kv: kv[0])
     ]

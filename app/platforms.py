@@ -36,8 +36,21 @@ def present_counts(accession: str) -> dict[str, int] | None:
     return p["present"] if p else None
 
 
+def present_normalisation(accession: str) -> dict[str, int]:
+    """How many of each clock's normalisation probes this array carries.
+
+    Empty until the refresh workflow has rebuilt the table with this field, so
+    callers must treat a missing clock as "not measured" rather than as zero -
+    reporting zero would condemn a clock on no evidence, which is the mirror of
+    the overstatement this field was added to fix.
+    """
+    p = table()["platforms"].get(accession) or {}
+    return p.get("present_normalisation") or {}
+
+
 def meta(accession: str) -> dict | None:
     p = table()["platforms"].get(accession)
     if not p:
         return None
-    return {k: v for k, v in p.items() if k != "present"} | {"accession": accession}
+    return {k: v for k, v in p.items()
+            if k not in ("present", "present_normalisation")} | {"accession": accession}

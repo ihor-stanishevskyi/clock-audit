@@ -11,3 +11,8 @@ pyaging==0.6.2
 # 2026-07-11 - so this is pinned here rather than reported.
 seaborn==0.13.2
 lifelines==0.30.0
+
+# extract_clocks.py now reads the DunedinPACE gold-standard file itself, so
+# pandas is a direct dependency of the build step and not only biolearn's.
+# Left unpinned so pip resolves whatever biolearn's own constraint allows.
+pandas

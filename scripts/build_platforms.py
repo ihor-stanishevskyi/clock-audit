@@ -84,9 +84,22 @@ def main() -> int:
             "url": f"https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={acc}",
             # present[clock] = how many of its required sites this array carries
             "present": {name: len(set(c["sites"]) & got) for name, c in clocks.items()},
+            # Some clocks normalise against a probe set far larger than their
+            # own coefficients - DunedinPACE against 20,000. An array can carry
+            # every coefficient and little of that set, and the answer is then
+            # built from reference values. Counted separately so the service can
+            # take the worse of the two rather than the flattering one.
+            "present_normalisation": {
+                name: len(set(c["normalisation_sites"]) & got)
+                for name, c in clocks.items() if c.get("normalisation_sites")},
         }
         full = [n for n, c in clocks.items() if out["platforms"][acc]["present"][n] == c["n_sites"]]
         print(f"  clocks fully covered: {len(full)} of {len(clocks)}")
+        for n, hit in out["platforms"][acc]["present_normalisation"].items():
+            need = clocks[n]["n_normalisation_sites"]
+            print(f"  {n}: {out['platforms'][acc]['present'][n]}/{clocks[n]['n_sites']} "
+                  f"coefficients but {hit}/{need} ({hit/need:.1%}) of its "
+                  f"normalisation set")
 
     with gzip.open("app/platforms.json.gz", "wt", encoding="utf-8") as fh:
         json.dump(out, fh)

@@ -5,6 +5,7 @@ measured on 2026-11-19 so that a later refactor cannot quietly change the
 science while the API still looks fine.
 """
 import io
+import pathlib
 from itertools import pairwise
 
 import pytest
@@ -145,9 +146,15 @@ def test_every_clock_reported_when_unfiltered():
     assert sum(b["tally"].values()) == len(b["results"])
 
 
-def test_results_sorted_by_coverage_desc():
+def test_results_sorted_by_the_coverage_the_verdict_used():
+    """Sorted on the figure the verdict came from, not on the flattering one.
+
+    A clock that normalises against a larger probe set can top the table on its
+    own coefficients while being unusable, which is exactly the row a reader
+    needs to see first rather than last.
+    """
     r = client.post("/audit", json={"cpgs": HORVATH})
-    covs = [x["coverage"] for x in r.json()["results"]]
+    covs = [x["effective_coverage"] for x in r.json()["results"]]
     assert covs == sorted(covs, reverse=True)
 
 
@@ -316,3 +323,120 @@ def test_the_array_answer_needs_no_data_and_says_so():
     b = client.get("/audit/platform/GPL8490").json()
     assert "input" not in b           # nothing was supplied, and none is implied
     assert b["platform"]["label"] and b["caveat"]
+
+
+# --- a clock may need more than its coefficients ----------------------------
+#
+# DunedinPACE carries 173 weighted sites and quantile-normalises against 20,000
+# probes first, filling whatever is absent from reference values. The service
+# published 173 as the requirement for five days. These tests exist so that
+# cannot come back.
+
+NORMALISING = [n for n, c in catalogue()["clocks"].items() if c.get("norm_set")]
+
+
+def test_the_catalogue_knows_which_clocks_need_more_than_their_coefficients():
+    assert "DunedinPACE" in NORMALISING, (
+        "DunedinPACE normalises against a 20,000-probe gold standard; if the "
+        "catalogue has lost that, every coverage figure for it is overstated")
+    c = catalogue()["clocks"]["DunedinPACE"]
+    assert c["n_normalisation_sites"] > 10 * c["n_sites"]
+    assert len(c["norm_set"]) == c["n_normalisation_sites"]
+
+
+def test_the_extra_requirement_is_published_not_hidden():
+    b = client.get("/clocks/DunedinPACE").json()
+    assert b["normalisation_sites"] == len(catalogue()["clocks"]["DunedinPACE"]["norm_set"])
+    assert b["normalisation_source"]
+    assert str(b["required_sites"]) in b["normalisation_means"]
+    assert str(b["normalisation_sites"]) in b["normalisation_means"]
+
+
+@pytest.mark.parametrize("name", NORMALISING)
+def test_full_coefficient_coverage_is_not_enough_to_pass(name):
+    """Every coefficient present, little of the normalisation set: not "ok".
+
+    This is the failure the old code shipped. Coverage read 100% and the
+    verdict read "ok", while the answer was built from reference values.
+    """
+    c = catalogue()["clocks"][name]
+    ids = sorted(c["site_set"]) + sorted(c["norm_set"])[: len(c["norm_set"]) // 10]
+    r = client.post("/audit", json={"cpgs": ids, "clocks": [name]}).json()["results"][0]
+    assert r["coverage"] == 1.0, "the coefficients were all supplied"
+    assert r["normalisation_coverage"] < 0.5
+    assert r["effective_coverage"] == r["normalisation_coverage"]
+    assert r["verdict"] != "ok"
+    assert "verdict follows the lower figure" in r["normalisation_note"]
+
+
+@pytest.mark.parametrize("name", NORMALISING)
+def test_both_sets_present_passes(name):
+    """The control: supply everything and the clock is fine. Otherwise the test
+    above would pass for a service that simply condemned this clock always."""
+    c = catalogue()["clocks"][name]
+    ids = sorted(c["site_set"] | c["norm_set"])
+    r = client.post("/audit", json={"cpgs": ids, "clocks": [name]}).json()["results"][0]
+    assert r["coverage"] == 1.0
+    assert r["normalisation_coverage"] == 1.0
+    assert r["verdict"] == "ok"
+
+
+def test_unmeasured_normalisation_coverage_is_stated_not_assumed(monkeypatch):
+    """A platform table built before this field existed must not be read as zero.
+
+    Reporting zero would condemn the clock on no evidence - the mirror of the
+    overstatement being fixed - and reporting nothing would let the flattering
+    number stand unqualified. It has to say which it is.
+    """
+    monkeypatch.setattr("app.main.present_normalisation", lambda acc: {})
+    b = client.get("/audit/platform/GPL13534?kind=age").json()
+    rows = {r["clock"]: r for r in b["results"]}
+    for name in NORMALISING:
+        if name not in rows:
+            continue
+        r = rows[name]
+        assert r["normalisation_coverage"] is None
+        assert "not been measured" in r["normalisation_note"]
+        assert "upper bound" in r["normalisation_note"]
+        assert "normalisation_present" not in r
+
+
+# --- the page cannot claim more than the API returns ------------------------
+
+def test_the_page_reads_only_fields_a_response_actually_has():
+    """Every r.<field> the script touches must exist in some result row.
+
+    The page once read a field the API had renamed and threw on every load
+    while every test passed, because no test looked at the page.
+    """
+    import re
+
+    from app.page import PAGE
+
+    ids = sorted(catalogue()["clocks"]["DunedinPACE"]["norm_set"]) + HORVATH
+    rows = client.post("/audit", json={"cpgs": ids}).json()["results"]
+    available = set().union(*(set(r) for r in rows))
+    read = set(re.findall(r"\br\.([a-z_]+)\b", PAGE))
+    assert read, "the pattern stopped matching; fix the test, not the page"
+    assert read <= available, f"page reads fields no response carries: {sorted(read - available)}"
+
+
+def test_the_page_shows_the_coverage_the_verdict_used():
+    from app.page import PAGE
+
+    assert "effective_coverage" in PAGE, (
+        "the table must not show coefficient coverage beside a verdict reached "
+        "on a lower figure - that reads as a bug in the table")
+    assert "normalisation probes" in PAGE
+
+
+def test_the_extractor_refuses_to_ship_an_unrecorded_preprocessing_set():
+    """The tripwire, checked as text because the extractor needs biolearn.
+
+    If a later biolearn gives another clock a preprocessing step, the build must
+    fail rather than publish an understated requirement for it.
+    """
+    src = pathlib.Path("scripts/extract_clocks.py").read_text(encoding="utf-8")
+    assert "PREPROCESS_SETS" in src
+    assert "DunedinPACE_Gold_Means.csv" in src
+    assert "unaccounted" in src and "sys.exit" in src

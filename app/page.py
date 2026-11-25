@@ -70,6 +70,10 @@ PAGE = r"""<!doctype html>
   .bar > i { display:block; height:100% }
   .tally { display:flex; flex-wrap:wrap; gap:14px; margin:0 0 14px; font-size:14px }
   .muted { color:var(--muted) }
+  /* Used by the normalisation line under a clock's name. Declared here because
+     a class referenced from the script and absent from the stylesheet renders
+     at full size and reads as a second headline. */
+  .small { font-size:12px; line-height:1.35; margin-top:3px }
   .warn { border-left:3px solid var(--caution); padding-left:12px; font-size:14px; color:var(--muted) }
   .facts { display:grid; grid-template-columns:repeat(auto-fit,minmax(135px,1fr)); gap:12px }
   .fact b { display:block; font-size:21px; font-variant-numeric:tabular-nums; line-height:1.2 }
@@ -142,17 +146,20 @@ let AGE_NAMES = null;
 // the network dropped, or the service answered no. A phone on a flaky
 // connection hits the first one often, so retry it once before giving up and
 // say which happened - "Failed to fetch" is the browser talking, not us.
+// The response is `res`, not `r`: `r` is a result row everywhere below, and a
+// test checks that every r.<field> the page reads is a field the API returns.
+// Two meanings for one name would make that check unable to tell them apart.
 async function j(url, opts, retry = true) {
-  let r;
+  let res;
   try {
-    r = await fetch(url, opts);
+    res = await fetch(url, opts);
   } catch (e) {
     if (retry) { await new Promise(s => setTimeout(s, 900)); return j(url, opts, false); }
     throw new Error("No answer from the service. That is usually the connection, "
                     + "not the server - check it and press again.");
   }
-  const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.detail ? JSON.stringify(body.detail) : "The service refused: HTTP " + r.status);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail ? JSON.stringify(body.detail) : "The service refused: HTTP " + res.status);
   return body;
 }
 
@@ -220,10 +227,24 @@ function render(d) {
   const tally = order.filter(k => t[k]).map(k =>
     `<span class="${k}"><b>${t[k]}</b> ${k}</span>`).join("");
   const rows = d.results.map(r => {
-    const pct = (r.coverage * 100).toFixed(r.coverage && r.coverage < 0.1 ? 2 : 1) + "%";
+    // The figure the verdict was reached on, not the flattering one. A clock
+    // that normalises against a larger probe set can cover all its own
+    // coefficients and still be unusable; showing 100% beside "unusable"
+    // would read as a bug in the table rather than a fact about the clock.
+    const eff = r.effective_coverage != null ? r.effective_coverage : r.coverage;
+    const pct = (eff * 100).toFixed(eff && eff < 0.1 ? 2 : 1) + "%";
     const col = `var(--${r.verdict === "refuse" ? "bad" : r.verdict})`;
+    let extra = "";
+    if (r.normalisation_sites) {
+      extra = r.normalisation_coverage == null
+        ? `<div class="muted small">+ ${r.normalisation_sites} normalisation probes, coverage not measured</div>`
+        : `<div class="muted small">+ ${r.normalisation_present} / ${r.normalisation_sites} normalisation probes`
+          + (r.normalisation_coverage < r.coverage
+             ? ` — this is what the verdict follows, not the ${(r.coverage*100).toFixed(0)}% above</div>`
+             : `</div>`);
+    }
     return `<tr>
-      <td class="name">${esc(r.clock)}<div class="bar"><i style="width:${Math.max(r.coverage*100,1)}%;background:${col}"></i></div></td>
+      <td class="name">${esc(r.clock)}<div class="bar"><i style="width:${Math.max(eff*100,1)}%;background:${col}"></i></div>${extra}</td>
       <td data-l="verdict"><span class="pill ${esc(r.verdict)}">${esc(r.verdict)}</span></td>
       <td data-l="coverage" class="num">${pct}</td>
       <td data-l="sites" class="num mono">${r.present_sites} / ${r.required_sites}</td>

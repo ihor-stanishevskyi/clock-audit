@@ -24,7 +24,7 @@ from .degradation import SOURCE, retained_signal, verdict
 from .page import PAGE
 from .platforms import listing as platform_listing
 from .platforms import meta as platform_meta
-from .platforms import present_counts
+from .platforms import present_counts, present_normalisation
 
 MAX_SITES = 1_200_000          # EPIC v2 is ~935k; this is a generous ceiling
 MAX_UPLOAD = 64 * 1024 * 1024  # 64 MiB
@@ -61,16 +61,53 @@ def guess_platform(n: int) -> str | None:
     return None
 
 
-def row(name: str, c: dict, hit: int) -> dict:
+def row(name: str, c: dict, hit: int, norm_hit: int | None = None) -> dict:
     """One clock's verdict. Shared by the paste path and the array path, so the
-    two can never drift into disagreeing about the same coverage."""
+    two can never drift into disagreeing about the same coverage.
+
+    Some clocks need more than their coefficients. DunedinPACE quantile-
+    normalises the sample against 20,000 probes and imputes whatever is missing
+    from them BEFORE its 173 weights are applied, so coverage of the 173 alone
+    can read 100% while the answer is largely reference values. Where that
+    second coverage is known the verdict follows the lower of the two; where it
+    is not, the row says so instead of letting the flattering number stand
+    unqualified.
+    """
     cov = hit / c["n_sites"]
-    v, note = verdict(cov, hit)
-    return {"clock": name, "kind": kind_of(c), "library": c["library"],
-            "output": c.get("output"), "required_sites": c["n_sites"],
-            "present_sites": hit, "coverage": round(cov, 4),
-            "retained_signal": round(retained_signal(cov), 3),
-            "verdict": v, "note": note}
+    need_norm = c.get("n_normalisation_sites")
+    out = {"clock": name, "kind": kind_of(c), "library": c["library"],
+           "output": c.get("output"), "required_sites": c["n_sites"],
+           "present_sites": hit, "coverage": round(cov, 4)}
+
+    effective = cov
+    if need_norm:
+        out["normalisation_sites"] = need_norm
+        if norm_hit is None:
+            out["normalisation_coverage"] = None
+            out["normalisation_note"] = (
+                f"Before using its {c['n_sites']} weighted sites this clock "
+                f"normalises against {need_norm} probes and fills any that are "
+                f"missing from reference values. How many of those are present "
+                f"here has not been measured, so the coverage above is an upper "
+                f"bound on what this clock can actually do.")
+        else:
+            ncov = norm_hit / need_norm
+            effective = min(cov, ncov)
+            out["normalisation_present"] = norm_hit
+            out["normalisation_coverage"] = round(ncov, 4)
+            if ncov < cov:
+                out["normalisation_note"] = (
+                    f"Coverage of its own {c['n_sites']} weighted sites is "
+                    f"{cov:.0%}, but it normalises against {need_norm} probes "
+                    f"first and only {ncov:.0%} of those are here. The verdict "
+                    f"follows the lower figure.")
+
+    v, note = verdict(effective, hit)
+    out["effective_coverage"] = round(effective, 4)
+    out["retained_signal"] = round(retained_signal(effective), 3)
+    out["verdict"] = v
+    out["note"] = note
+    return out
 
 
 def tally_of(results: list[dict]) -> dict:
@@ -96,9 +133,12 @@ def audit(given: list[str], only: list[str] | None) -> dict:
     all_known = set().union(*(c["site_set"] for c in cl.values()))
     recognised = present_set & all_known
 
-    results = [row(name, c, len(c["site_set"] & present_set))
+    results = [row(name, c, len(c["site_set"] & present_set),
+                   len(c["norm_set"] & present_set) if c["norm_set"] else None)
                for name, c in chosen.items()]
-    results.sort(key=lambda r: (-r["coverage"], r["clock"]))
+    # Sorted by the coverage the verdict actually used, so the worst case is
+    # not hidden below a clock that only looks better on its coefficients.
+    results.sort(key=lambda r: (-r["effective_coverage"], r["clock"]))
     tally = tally_of(results)
 
     return {
@@ -136,6 +176,14 @@ def clock(name: str):
     out = {"clock": name, "kind": kind_of(c), "library": c["library"],
            "required_sites": c["n_sites"], "output": c.get("output"),
            "year": c.get("year"), "tissue": c.get("tissue")}
+    if c.get("n_normalisation_sites"):
+        out["normalisation_sites"] = c["n_normalisation_sites"]
+        out["normalisation_source"] = c.get("normalisation_source")
+        out["normalisation_means"] = (
+            f"{name} needs {c['n_normalisation_sites']} probes for "
+            f"quantile normalisation in addition to its {c['n_sites']} weighted "
+            f"sites, and fills any that are absent from reference values. Judge "
+            f"it on whichever of the two is worse covered.")
     # SexEstimation needs essentially a whole array; sending that inline helps
     # nobody and would dwarf every other response.
     if c["n_sites"] <= SITES_INLINE_MAX:
@@ -188,9 +236,10 @@ def audit_platform(
     if kind is not None and kind not in KIND_NOTE:
         raise HTTPException(400, f"unknown kind {kind!r}; expected one of {sorted(KIND_NOTE)}")
     cl = catalogue()["clocks"]
-    results = [row(n, c, counts[n]) for n, c in cl.items()
+    norm = present_normalisation(accession)
+    results = [row(n, c, counts[n], norm.get(n)) for n, c in cl.items()
                if n in counts and (kind is None or kind_of(c) == kind)]
-    results.sort(key=lambda r: (-r["coverage"], r["clock"]))
+    results.sort(key=lambda r: (-r["effective_coverage"], r["clock"]))
     return {"platform": platform_meta(accession), "filtered_to": kind,
             "tally": tally_of(results), "results": results,
             "caveat": CAVEAT, "measured_on": SOURCE}
