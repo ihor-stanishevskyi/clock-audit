@@ -6,13 +6,14 @@ science while the API still looks fine.
 """
 import io
 import pathlib
+import re
 from itertools import pairwise
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.clocks import catalogue
-from app.degradation import FULL_SD, MEASURED, retained_signal
+from app.degradation import RETAINED, SHIFT_YEARS, retained_signal, shift_years
 from app.main import app
 
 client = TestClient(app)
@@ -21,11 +22,31 @@ HORVATH = sorted(catalogue()["clocks"]["Horvathv1"]["site_set"])
 
 # --- the science, pinned ----------------------------------------------------
 
-@pytest.mark.parametrize("coverage,sd", MEASURED)
-def test_curve_reproduces_measured_points(coverage, sd):
-    """Every measured point must come back out of the interpolation."""
-    expected = min(1.0, sd / FULL_SD)
-    assert retained_signal(coverage) == pytest.approx(expected, abs=1e-6)
+@pytest.mark.parametrize("coverage,pair", RETAINED)
+def test_curve_reproduces_measured_points(coverage, pair):
+    """Every measured point must come back out of the interpolation. The curve
+    reports the worse of the two cohorts, so that is what must come back."""
+    assert retained_signal(coverage) == pytest.approx(min(pair), abs=1e-6)
+
+
+@pytest.mark.parametrize("coverage,pair", SHIFT_YEARS)
+def test_shift_reproduces_measured_points(coverage, pair):
+    """Same for the shift table, which reports the larger of the two."""
+    assert shift_years(coverage) == pytest.approx(max(pair), abs=1e-6)
+
+
+def test_shift_falls_as_coverage_rises():
+    xs = [i / 200 for i in range(201)]
+    ys = [shift_years(x) for x in xs]
+    assert all(b <= a + 1e-9 for a, b in pairwise(ys)), "shift must not grow as coverage rises"
+
+
+def test_ten_percent_loss_is_the_size_of_a_real_effect():
+    """The number that makes this tool worth running: losing a tenth of the
+    probes moves the median clock about as far as smoking does (+2.70 years on
+    PhenoAge, measured on GSE50660). If a refresh ever makes this benign, the
+    curve changed and the page's warning no longer matches it."""
+    assert 2.0 < shift_years(0.90) < 3.5
 
 
 def test_curve_is_monotonic():
@@ -119,8 +140,11 @@ def test_partial_coverage_degrades():
     res = r.json()["results"][0]
     assert res["present_sites"] == 106
     assert res["coverage"] == pytest.approx(0.3003, abs=1e-3)
-    assert res["verdict"] == "degraded"
-    assert 0.70 < res["retained_signal"] < 0.73
+    # Measured on real cohorts this is worse than the old single-clock curve
+    # said: 0.37 of the spread survives at 30% coverage, not 0.71.
+    assert res["verdict"] == "unusable"
+    assert 0.33 < res["retained_signal"] < 0.42
+    assert res["expected_shift_years"] > 10
 
 
 def test_tiny_coverage_is_unusable():
@@ -162,9 +186,12 @@ def test_caveat_is_always_present():
     """The honesty of the response is part of the contract, so it is tested."""
     r = client.post("/audit", json={"cpgs": HORVATH})
     b = r.json()
-    assert "extrapolation" in b["caveat"]
     assert "rule of thumb" in b["caveat"]
-    assert "2026-11-19" in b["measured_on"]
+    assert "does not replicate" in b["caveat"]
+    # measured_on must name the cohorts the curve actually came from, so a
+    # stale curve cannot hide behind a fresh-looking response.
+    assert "GSE40279" in b["measured_on"] and "GSE50660" in b["measured_on"]
+    assert "2026-11-26" in b["measured_on"]
 
 
 def test_duplicates_do_not_inflate_coverage():
@@ -275,7 +302,11 @@ def test_health_carries_the_caveat_so_the_page_can_show_it_unprompted():
     someone ran an audit - which is exactly the reader who had not yet been
     warned. The limits ship with the status, not with the answer."""
     c = client.get("/health").json()["caveat"]
-    assert "extrapolation" in c and "rule of thumb" in c
+    # The words change as the measurement improves; what must not disappear is
+    # that the caveat still names its three live limits.
+    assert "rule of thumb" in c, "the bands are still a judgement call"
+    assert "does not replicate" in c, "per-clock ranking is not supported"
+    assert "random" in c, "dropout was random; real missingness is not"
 
 
 # --- what an array carries -------------------------------------------------
@@ -440,3 +471,17 @@ def test_the_extractor_refuses_to_ship_an_unrecorded_preprocessing_set():
     assert "PREPROCESS_SETS" in src
     assert "DunedinPACE_Gold_Means.csv" in src
     assert "unaccounted" in src and "sys.exit" in src
+
+def test_table_header_and_row_have_the_same_number_of_columns():
+    """A column was once added to the row and not to the header, which silently
+    shifts every cell. Count both in the served page rather than trusting the
+    eye: the row template is one template literal, so its cells are countable."""
+    page = client.get("/").text
+    head = re.search(r"<thead>.*?</thead>", page, re.S)
+    assert head, "no table header in the page"
+    # "<th" also matches "<thead", which is how this test first miscounted.
+    n_head = len(re.findall(r"<th[\s>]", head.group(0)))
+    body = re.search(r"return `<tr>(.*?)</tr>`", page, re.S)
+    assert body, "no row template in the page"
+    n_row = len(re.findall(r"<td[\s>]", body.group(1)))
+    assert n_head == n_row, f"{n_head} headers against {n_row} cells per row"

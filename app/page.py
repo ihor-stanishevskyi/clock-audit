@@ -249,6 +249,7 @@ function render(d) {
       <td data-l="coverage" class="num">${pct}</td>
       <td data-l="sites" class="num mono">${r.present_sites} / ${r.required_sites}</td>
       <td data-l="signal kept" class="num">${(r.retained_signal*100).toFixed(0)}%</td>
+      <td data-l="years off" class="num">${r.expected_shift_years > 0.05 ? "~" + r.expected_shift_years.toFixed(1) : "-"}</td>
       <td data-l="predicts" class="muted">${esc(r.output || "")}</td>
     </tr>`;
   }).join("");
@@ -268,7 +269,8 @@ function render(d) {
     <div class="tally">${tally}</div>
     <p class="muted" style="font-size:13.5px">${lead}</p>
     <table><thead><tr><th>Clock</th><th>Verdict</th><th class="num">Coverage</th>
-      <th class="num">Sites</th><th class="num">Signal kept</th><th>Predicts</th></tr></thead>
+      <th class="num">Sites</th><th class="num">Signal kept</th>
+      <th class="num">Years off</th><th>Predicts</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`;
   if (d.caveat) $("#caveat").textContent = d.caveat;
   $("#out").scrollIntoView({behavior: "smooth", block: "start"});

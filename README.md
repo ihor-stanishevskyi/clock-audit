@@ -10,7 +10,9 @@ An epigenetic clock is a weighted sum over a fixed set of CpG sites — Horvath
 Python libraries do not stop. They fill the gaps from reference-cohort medians
 and return a plausible age anyway.
 
-Measured on 2026-11-19, the real Horvath 2013 clock over one cohort of 24
+Measured on 2026-11-26 on two real cohorts - GSE40279 (656 people) and
+GSE50660 (464) - across 19 published clocks. Earlier the curve came from one
+clock over 24
 samples, through **biolearn 0.9.1** and **pyaging 0.6.2**:
 
 | sites present of 353 | library said anything? | predicted ages | spread (sd) |
@@ -70,9 +72,13 @@ curl -s localhost:8080/audit \
 
 ## Honesty about the numbers
 
-`retained_signal` is interpolated from **one** experiment: Horvath 2013, 353
-CpGs, 24 synthetic samples, at eight coverage levels. Applying that curve to the
-other 58 clocks is extrapolation, and every API response says so in its
+`retained_signal` and `expected_shift_years` are the **median of 19 published
+clocks** on two real cohorts, not a prediction for any one clock. Per-clock
+robustness does **not** replicate between those cohorts (rank correlation -0.39
+to +0.43, never significant at any coverage level), so this tool gives one
+population expectation instead of ranking clocks. Dropout was random; real
+missingness is not, and the one real mask here is the 27k platform scenario.
+Every API response says so in its
 `caveat` field.
 
 The verdict bands (`ok` / `caution` / `degraded` / `unusable`) are this tool's

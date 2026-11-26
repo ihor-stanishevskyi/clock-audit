@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from . import __version__
 from .clocks import KIND_NOTE, catalogue, kind_of, sources, summary
-from .degradation import SOURCE, retained_signal, verdict
+from .degradation import SOURCE, retained_range, retained_signal, shift_years, verdict
 from .page import PAGE
 from .platforms import listing as platform_listing
 from .platforms import meta as platform_meta
@@ -30,10 +30,15 @@ MAX_SITES = 1_200_000          # EPIC v2 is ~935k; this is a generous ceiling
 MAX_UPLOAD = 64 * 1024 * 1024  # 64 MiB
 
 CAVEAT = (
-    "retained_signal is interpolated from one experiment: Horvath 2013 (353 CpGs) over "
-    "24 synthetic samples, 2026-11-19. Applying it to any other clock is extrapolation. "
-    "The verdict bands are this tool's rule of thumb - no minimum coverage is published "
-    "for these clocks. Treat coverage (a fact) more seriously than the verdict (a judgement)."
+    "retained_signal and expected_shift_years are the MEDIAN of 19 published clocks measured "
+    "on two real cohorts (GSE40279 n=656, GSE50660 n=464, 2026-11-26), not a prediction for "
+    "your clock. Per-clock robustness does not replicate between those cohorts (rank "
+    "correlation -0.39 to +0.43, never significant), so this tool deliberately gives one "
+    "population expectation rather than ranking clocks. Coverage itself is per-clock and "
+    "comes from the array manifest - treat coverage (a fact) more seriously than the verdict "
+    "(a judgement). The verdict bands are this tool's rule of thumb; no minimum coverage is "
+    "published for these clocks. Dropout in that experiment was random, and real missingness "
+    "is not - the one real mask here is the 27k platform scenario."
 )
 
 # Known array sizes, for a hint about which platform was supplied.
@@ -105,6 +110,12 @@ def row(name: str, c: dict, hit: int, norm_hit: int | None = None) -> dict:
     v, note = verdict(effective, hit)
     out["effective_coverage"] = round(effective, 4)
     out["retained_signal"] = round(retained_signal(effective), 3)
+    lo, hi = retained_range(effective)
+    out["retained_signal_range"] = [round(lo, 3), round(hi, 3)]
+    # Spread and shift are separate failures: across both cohorts their rank
+    # correlation was never significant. A clock can keep its spread and still
+    # answer years off, so the page shows both.
+    out["expected_shift_years"] = round(shift_years(effective), 1)
     out["verdict"] = v
     out["note"] = note
     return out
