@@ -485,3 +485,42 @@ def test_table_header_and_row_have_the_same_number_of_columns():
     assert body, "no row template in the page"
     n_row = len(re.findall(r"<td[\s>]", body.group(1)))
     assert n_head == n_row, f"{n_head} headers against {n_row} cells per row"
+
+
+def test_law_agrees_with_the_measured_table():
+    """Two descriptions of one experiment must not drift apart.
+
+    retained = coverage ** 0.728 (project doc 44) against the measured medians in
+    RETAINED. This catches GROSS drift: a table rewritten against a different
+    experiment, or an exponent edited without the table.
+
+    What it does NOT catch, checked rather than assumed: the GrimAge inflation
+    corrected on 2026-11-26. Those values sat 0.022-0.029 off, and the largest
+    LEGITIMATE gap between law and table is 0.085 (at 50% coverage, GSE40279), so
+    no tolerance can pass the right table and fail that one. The regression pin in
+    test_covariate_readers_are_not_in_the_retained_table is what guards that case.
+    Found by putting the defect back and watching only one of the two tests fail.
+    """
+    from app.degradation import RETAINED, LAW_EXPONENT, LAW_MEDIAN_TOLERANCE
+    for coverage, pair in RETAINED:
+        if coverage in (0.0, 1.0):
+            continue
+        law = coverage ** LAW_EXPONENT
+        for measured in pair:
+            assert abs(law - measured) <= LAW_MEDIAN_TOLERANCE, (
+                f"at {coverage:.0%} coverage the law gives {law:.3f} but the "
+                f"table says {measured:.3f}")
+
+
+def test_covariate_readers_are_not_in_the_retained_table():
+    """A regression pin on the correction of 2026-11-26.
+
+    GrimAge V1/V2 are handed chronological age and sex, so at 5% coverage they
+    still keep ~0.8 of their spread. With them in, the median retained at 5% read
+    0.123/0.171; without them it is 0.099/0.149. If a future edit puts them back,
+    the table drifts optimistic and this catches it.
+    """
+    from app.degradation import RETAINED
+    at_five = dict(RETAINED)[0.05]
+    assert at_five == (0.099, 0.149), f"5% row is {at_five}, expected the 17-clock medians"
+    assert max(at_five) < 0.20, "a row this high means covariate readers are back in"

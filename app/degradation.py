@@ -22,19 +22,35 @@ robustness ranking would be noise dressed as advice. What this module gives is
 a POPULATION expectation: what the median published clock did, and the range
 the nineteen spanned. Per-clock COVERAGE is a different matter and is reliable
 - it comes from the array manifest, not from this experiment.
+
+That refusal now has a number behind it (project doc 44). The whole curve is one
+power law, retained = coverage ** 0.73, which describes all 17 non-degenerate
+clocks in both cohorts. Fit that exponent PER CLOCK on one cohort and predict the
+other, and it loses to the single pooled value: the per-clock fit won 35 of 102
+cells one way and 34 of 102 the other. A per-clock parameter overfits its own
+cohort and costs accuracy on the next one. So this is a measured result, not
+caution.
 """
 from bisect import bisect_left
 
 # coverage -> (median retained spread in GSE40279, in GSE50660)
-# 19 clocks, degenerate ones (1-8 sites) excluded.
+# 17 clocks: degenerate ones (1-8 sites) excluded, AND the two clocks handed
+# chronological age and sex as model inputs. Corrected 2026-11-26: this table
+# used to include GrimAge V1/V2, which keep 0.79-0.83 of their spread at 5%
+# coverage because they are given the answer, not because they survive the loss.
+# That inflated every row by 0.001-0.029 - always in the optimistic direction,
+# which is the wrong direction for a tool whose job is to warn. SHIFT_YEARS had
+# always excluded them, so the two tables described different clock sets; the
+# inconsistency surfaced when the power-law fit of doc 44 disagreed with the
+# table it was fitted to.
 RETAINED = [
     (0.00, (0.000, 0.000)),
-    (0.05, (0.123, 0.171)),
-    (0.15, (0.238, 0.315)),
-    (0.30, (0.370, 0.476)),
-    (0.50, (0.536, 0.608)),
-    (0.70, (0.727, 0.782)),
-    (0.90, (0.905, 0.951)),
+    (0.05, (0.099, 0.149)),
+    (0.15, (0.231, 0.295)),
+    (0.30, (0.349, 0.470)),
+    (0.50, (0.519, 0.607)),
+    (0.70, (0.723, 0.770)),
+    (0.90, (0.901, 0.922)),
     (1.00, (1.000, 1.000)),
 ]
 
@@ -62,6 +78,15 @@ SOURCE = ("19 published clocks on GSE40279 (656 people) and GSE50660 (464), "
 # own data: smoking +2.70 years on PhenoAge (GSE50660), ovarian cancer +2.28
 # (GSE19711). Losing a tenth of the probes moves the median clock 2.7 years.
 EFFECT_SIZE_REFERENCE = 2.7
+
+# The same measurement as RETAINED, written as one power law (project doc 44,
+# fitted through (1,1) because retained is 1 at full coverage by definition).
+# It is NOT used to answer queries - the table is the measurement and is more
+# accurate. It is kept here so that the two descriptions of one experiment have
+# to keep agreeing: test_law_agrees_with_the_measured_table pins them together,
+# and it is what caught GrimAge inflating the table above.
+LAW_EXPONENT = 0.728
+LAW_MEDIAN_TOLERANCE = 0.10
 
 
 def _interp(table: list, coverage: float) -> tuple[float, float]:
