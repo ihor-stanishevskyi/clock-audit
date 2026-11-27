@@ -85,6 +85,19 @@ EFFECT_SIZE_REFERENCE = 2.7
 # accurate. It is kept here so that the two descriptions of one experiment have
 # to keep agreeing: test_law_agrees_with_the_measured_table pins them together,
 # and it is what caught GrimAge inflating the table above.
+#
+# WHICH statistic this number is, because three different ones are 0.73-0.83 and
+# mixing them up reads as a defect in this file (it nearly did on 2026-11-26):
+#   0.728  median of the PER-CLOCK exponents, pooled over BOTH cohorts  <- this
+#   0.804  median of the per-clock exponents, GSE40279 alone
+#   0.834  one regression over every (coverage, retained) point, GSE40279 alone
+# Each clock gets its own exponent from its own points; the median is taken over
+# clocks so that a clock with more surviving levels does not count for more.
+# The two-cohort value is the lower one because GSE50660 (ages 38-67) keeps more
+# spread at the same coverage than GSE40279 (19-101), and more retained at equal
+# coverage means a smaller exponent. So the exponent is a property of the cohort
+# as much as of the clock - which is also why the served answer is the measured
+# table and not this.
 LAW_EXPONENT = 0.728
 LAW_MEDIAN_TOLERANCE = 0.10
 
